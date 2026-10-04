@@ -11,6 +11,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import type { JsonObject } from '@earendil-works/pi-ai'
+
 import type { MessageLike, StopReason, ToolLike } from './types.ts'
 import { toJsonSchema } from './json-schema.ts'
 
@@ -29,12 +31,20 @@ export function recordArray(value: unknown): readonly Record<string, unknown>[] 
   return value.filter(isRecord)
 }
 
-export function recordOrEmpty(value: unknown): Record<string, unknown> {
-  if (isRecord(value)) return value
+/**
+ * Coerce a provider tool-argument payload to a JSON object.
+ *
+ * The result feeds {@link ToolCallContent}, which is typed as pi-ai's
+ * `JsonObject`; every value here originates from the provider's own JSON
+ * argument stream (already-decoded object, or a JSON string still arriving in
+ * fragments), so the cast is a restatement of that fact rather than a widening.
+ */
+export function recordOrEmpty(value: unknown): JsonObject {
+  if (isRecord(value)) return value as JsonObject
   if (typeof value === 'string') {
     try {
       const parsed: unknown = JSON.parse(value)
-      if (isRecord(parsed)) return parsed
+      if (isRecord(parsed)) return parsed as JsonObject
     } catch {
       // Some providers stream incomplete JSON argument fragments.
     }

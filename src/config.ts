@@ -89,7 +89,16 @@ const modelProfile: z<CommandCodeModelProfile> = z.object({
   maxTokens: z.number().step(1).min(1),
 })
 
-/** Runtime schema for {@link Config}. */
+/**
+ * Runtime schema for {@link Config}.
+ *
+ * Marked volatile as a whole: dsh 0.2 generates a plugin's settings form from
+ * the module's exported `Config` and only surfaces branches whose fields carry
+ * the volatile flag (`volatileForm` in `@deepseek-ai/dsh-settings`). The whole
+ * schema is user-editable here, which is what the old imperative
+ * `installSettingsSection(ctx, ns, Config, …)` registered, so the flag belongs
+ * on the root rather than on each field.
+ */
 export const Config: z<Config> = z.object({
   apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV),
   displayName: z.string(),
@@ -103,7 +112,7 @@ export const Config: z<Config> = z.object({
   timeoutMs: z.natural(),
   streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
   retryPolicy: RetryPolicySchema,
-})
+}).volatile() as z<Config>
 
 /** Validated profile with every adapter-owned default resolved. */
 export interface ResolvedCommandCodeOptions {

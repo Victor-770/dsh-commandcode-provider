@@ -14,10 +14,9 @@
  */
 
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
-import type { AssistantMessageEvent } from '@earendil-works/pi-ai'
+import type { AssistantMessageEvent, JsonObject } from '@earendil-works/pi-ai'
 import {
   attributionHeaders,
-  CallId,
   contentHasImage,
   CONTEXT_WINDOW_EXCEEDED_CODE,
   isContextWindowExceededError,
@@ -26,6 +25,7 @@ import {
   LlmError,
   QUOTA_EXCEEDED_CODE,
   ReasoningEffortId,
+  ToolCallId,
 } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
@@ -69,11 +69,14 @@ function flattenText(message: { content: readonly ContentBlock[] }): string {
     .join('')
 }
 
-/** Flatten text recursively inside one tool result. */
+/**
+ * Flatten the text of one tool-result message body.
+ *
+ * A tool result is its own `role: 'tool'` message in the 0.2 seam, so there is
+ * no nested `tool-result` content block to recurse into any more.
+ */
 function toolResultText(blocks: readonly ContentBlock[]): string {
-  return blocks.map((block) => block.type === 'text'
-    ? block.text
-    : block.type === 'tool-result' ? toolResultText(block.content) : '').join('')
+  return blocks.map((block) => block.type === 'text' ? block.text : '').join('')
 }
 
 /** Image part carrying base64 data + mime type, as the Command Code converters expect. */
@@ -86,7 +89,7 @@ interface ImagePart {
 /** The pi-plugin message vocabulary the Command Code converters consume. */
 type PiMessageLike =
   | { role: 'user'; content: string | ({ type: 'text'; text: string } | ImagePart)[] }
-  | { role: 'assistant'; content: ({ type: 'text'; text: string } | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> })[] }
+  | { role: 'assistant'; content: ({ type: 'text'; text: string } | { type: 'toolCall'; id: string; name: string; arguments: JsonObject })[] }
   | { role: 'toolResult'; toolCallId: string; toolName: string; content: { type: 'text'; text: string }[]; isError: boolean }
 
 /** One assistant message converted to the pi-plugin vocabulary; tool names are recorded for later results. */
@@ -99,9 +102,9 @@ function toPiAssistant(
     if (block.type === 'text') {
       if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
     } else if (block.type === 'tool-call') {
-      let argumentsValue: Record<string, unknown> = {}
+      let argumentsValue: JsonObject = {}
       try {
-        argumentsValue = JSON.parse(block.arguments) as Record<string, unknown>
+        argumentsValue = JSON.parse(block.arguments) as JsonObject
       } catch {
         argumentsValue = {}
       }
@@ -131,9 +134,6 @@ async function userContent(
         })
         break
       }
-      case 'tool-result':
-        for (const nested of block.content) await push(nested)
-        break
       default:
         // Other merge-extensible blocks are not user-input vocabulary here.
         break
@@ -176,18 +176,24 @@ function textOnlyContext(options: GenerateOptions): ContextLike {
       messages.push(toPiAssistant(message, toolNames))
       continue
     }
-    const text = flattenText(message)
-    const results = message.content.filter((block) => block.type === 'tool-result')
-    if (text.length > 0 || results.length === 0) messages.push({ role: 'user', content: text })
-    for (const result of results) {
+    // A tool result is its own `role: 'tool'` message carrying `toolCallId`
+    // directly, rather than a `tool-result` block nested in a user message.
+    if (message.role === 'tool') {
       messages.push({
         role: 'toolResult',
-        toolCallId: result.toolCallId,
-        toolName: toolNames.get(result.toolCallId) ?? 'unknown',
-        content: [{ type: 'text', text: toolResultText(result.content) || '(no output)' }],
-        isError: result.isError ?? false,
+        toolCallId: message.toolCallId,
+        toolName: toolNames.get(message.toolCallId) ?? 'unknown',
+        content: [{ type: 'text', text: toolResultText(message.content) || '(no output)' }],
+        isError: message.isError ?? false,
       })
+      continue
     }
+    // `developer` messages carry only tool-addition/tool-removal blocks, which
+    // the Command Code wire protocol has no representation for — the tool set
+    // travels with every request instead — so they contribute nothing here.
+    if (message.role === 'developer') continue
+    const text = flattenText(message)
+    if (text.length > 0) messages.push({ role: 'user', content: text })
   }
   return piContext(options, messages)
 }
@@ -208,25 +214,28 @@ async function toPiContextWithImages(options: GenerateOptions, attachments: Atta
       messages.push(toPiAssistant(message, toolNames))
       continue
     }
-    const regular = message.content.filter((block) => block.type !== 'tool-result')
-    const content = await userContent(regular, attachments)
-    const results = message.content.filter((block) => block.type === 'tool-result')
-    if (content.length > 0 || results.length === 0) {
-      messages.push({ role: 'user', content })
-    }
-    for (const result of results) {
-      const resultContent = await userContent(result.content, attachments)
+    // A tool result is its own `role: 'tool'` message carrying `toolCallId`
+    // directly; images inside it keep flowing through `userContent`.
+    if (message.role === 'tool') {
+      const resultContent = await userContent(message.content, attachments)
       const text = typeof resultContent === 'string'
         ? resultContent || '(no output)'
         : resultContent.map((part) => part.type === 'text' ? part.text : '').join('') || '(no output)'
       messages.push({
         role: 'toolResult',
-        toolCallId: result.toolCallId,
-        toolName: toolNames.get(result.toolCallId) ?? 'unknown',
+        toolCallId: message.toolCallId,
+        toolName: toolNames.get(message.toolCallId) ?? 'unknown',
         content: [{ type: 'text', text }],
-        isError: result.isError ?? false,
+        isError: message.isError ?? false,
       })
+      continue
     }
+    // `developer` messages carry only tool-addition/tool-removal blocks, which
+    // the Command Code wire protocol has no representation for — the tool set
+    // travels with every request instead — so they contribute nothing here.
+    if (message.role === 'developer') continue
+    const content = await userContent(message.content, attachments)
+    if (content.length > 0) messages.push({ role: 'user', content })
   }
 
   return piContext(options, messages)
@@ -397,7 +406,7 @@ export async function* toStreamChunks(
         yield {
           type: 'tool-call-delta',
           index: event.contentIndex,
-          id: CallId(known?.id ?? ''),
+          id: ToolCallId(known?.id ?? ''),
           ...known?.name !== undefined && known.name.length > 0 ? { name: known.name } : {},
           argumentsDelta: event.delta,
         }
@@ -409,7 +418,7 @@ export async function* toStreamChunks(
           index: event.contentIndex,
           block: {
             type: 'tool-call',
-            id: CallId(event.toolCall.id),
+            id: ToolCallId(event.toolCall.id),
             name: event.toolCall.name,
             arguments: JSON.stringify(event.toolCall.arguments),
           },

@@ -1,4 +1,4 @@
-import type { AssistantMessageEventStream } from '@earendil-works/pi-ai'
+import type { AssistantMessageEventStream, JsonObject } from '@earendil-works/pi-ai'
 
 /**
  * Command Code wire vocabulary, ported from pi-commandcode-provider so the
@@ -45,7 +45,14 @@ export interface ToolCallContent {
   type: 'toolCall'
   id: string
   name: string
-  arguments: Record<string, unknown>
+  /**
+   * Parsed tool arguments. Typed as pi-ai's `JsonObject` rather than
+   * `Record<string, unknown>`: the values are always decoded from the
+   * provider's JSON argument stream, and pi-ai's `ToolCall` requires the
+   * narrower type, so the loose form no longer satisfies the assistant
+   * message this plugin hands back.
+   */
+  arguments: JsonObject
 }
 
 export type AssistantContent = TextContent | ThinkingContent | ToolCallContent

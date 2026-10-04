@@ -85,8 +85,12 @@ describe('toCommandCodeContext', () => {
           ],
         } as never,
         {
-          role: 'user',
-          content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'body' }], isError: false }],
+          // A tool result is its own `role: 'tool'` message in the 0.2 seam,
+          // not a `tool-result` block nested in a user message.
+          role: 'tool',
+          toolCallId: 'c1',
+          content: [{ type: 'text', text: 'body' }],
+          isError: false,
         } as never,
       ],
     } as unknown as GenerateOptions)

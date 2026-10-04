@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
-import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import { CommandCodeAdapter } from './src/adapter.ts'
 import { Config, resolveOptions } from './src/config.ts'
@@ -42,7 +42,11 @@ export { toCommandCodeContext, toStreamChunks } from './src/adapter.ts'
 export const name = 'commandcode-provider'
 export const inject = ['llm']
 
-const NS = settingsNamespace('commandcode-provider')
+// Settings namespace. The 0.2 seam derives a plugin's namespace from its
+// profile entry id and no longer exports `settingsNamespace`; this constant is
+// that same id, used as the model-discovery key and as the directory's
+// `settingsNs`.
+const NS = 'commandcode-provider'
 const PKG = 'commandcode-provider'
 
 /** Default catalog cache path under the Harness home. */
@@ -143,20 +147,11 @@ export function apply(ctx: Context, config: Config): void {
   }
   ensureDirectory()
 
-  // Route effects bind to this apply fiber via the stable `ctx` reference,
-  // even when a swap runs inside the scoped settings callback below.
-  const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
-  let registeredPolicy = options().retryPolicy
-  const ensureRegistrationFacts = (): void => {
-    const policy = options().retryPolicy
-    if (deepEqualJson(policy, registeredPolicy)) return
-    // The registry captures the retry policy at registration, so it is the one
-    // fact per-request resolution cannot refresh. `replace` re-reads it in one
-    // synchronous registry section: disposing and re-registering instead would
-    // publish an empty route set between the two.
-    registration.replace([PROVIDER])
-    registeredPolicy = policy
-  }
+  // Route effects bind to this apply fiber via the stable `ctx` reference.
+  // The registry captures the retry policy at registration, so no in-place
+  // refresh is needed: a settings change re-applies this plugin, and the fresh
+  // registration below already carries the policy resolved from the new config.
+  ctx.llm.registerAdapter([PROVIDER], adapter)
 
   // Model discovery for the Models page "fetch available models" action.
   ctx.llm.registerModelDiscovery(NS, (request) => discoverModels(request, catalogModels))
@@ -252,33 +247,16 @@ export function apply(ctx: Context, config: Config): void {
     })
   }
 
-  installSettingsSection(ctx, NS, Config, config, {
-    setSource: (source) => {
-      current = source
-    },
-    onChange: () => {
-      // A refused settings generation keeps the previous routes and catalog
-      // serving; each ensure* is contained so one failure cannot wedge the rest.
-      try {
-        ensureRegistrationFacts()
-      } catch (error) {
-        ctx.logger.error('commandcode-provider: keeping the previously registered route after a refused update')
-        ctx.logger.error(error)
-      }
-      try {
-        ensureCatalogFacts()
-      } catch (error) {
-        ctx.logger.error('commandcode-provider: keeping the previous catalog facts after a refused update')
-        ctx.logger.error(error)
-      }
-      try {
-        ensureDirectory()
-      } catch (error) {
-        ctx.logger.error('commandcode-provider: keeping the previous configurable-provider directory after a refused update')
-        ctx.logger.error(error)
-      }
-    },
-  })
+  // Settings wiring. The 0.2 seam no longer takes an imperative settings
+  // section: `SettingsForms.describe()` derives the form from this module's
+  // exported `Config` schema, so that export plus volatile fields (see
+  // `src/config.ts`) is the whole registration.
+  //
+  // A settings change restarts this entry's fiber, so `ensureDirectory` and
+  // `ensureCatalogFacts` above already re-run against the new values and no
+  // change hook is needed here. `options()` at the top of this function keeps
+  // validating the composition, so an unserviceable value still fails the
+  // apply rather than being served.
 
   // Initial catalog load: live fetch with cached fallback; never fails boot.
   void catalog.refresh()
