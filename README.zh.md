@@ -8,6 +8,8 @@
 
 > **免责声明：** 这是非官方、社区维护的集成，与 Command Code 无隶属、背书或支持关系。你需要自己的 Command Code 账号。Command Code 的条款、可用性和定价适用。
 
+> **需要 dsh 0.2.0-rc.2 或更高版本。** 本版本面向 0.2 的 LLM 与设置接缝，在更老的 dsh 上条目无法加载。在 **设置 → 模型 → Command Code → 编辑** 中修改的配置会即时生效，无需重启 dsh。
+
 ## 快速开始
 
 **小白友好：安装只要一条命令，插件会自动挂载，不用改任何配置文件。**
@@ -15,7 +17,7 @@
 ### 1. 安装插件
 
 ```sh
-dsh plugin --profile web add dsh-commandcode-provider@0.1.3
+dsh plugin --profile web add dsh-commandcode-provider@0.2.0
 ```
 
 包声明了 `dsh.bundle`，所以 `dsh plugin add` 安装的同时会自动把它加入 profile 的 bundle 层——自带的 `cordis.patch.yml` 会替你挂好 provider 行。
@@ -102,6 +104,13 @@ commandcode-provider:
 
 ## 更新日志
 
+### 0.2.0
+
+- **适配 dsh 0.2.0-rc.2 接缝**：`ToolCallId`、一等 `role: 'tool'` 工具结果消息、`JsonObject` 工具参数，以及取代 `installSettingsSection` 的 schema 派生设置表单。
+- **设置即时生效**：每个配置字段都是实时引用（`Volatile`），插件每次使用时重新读取，并在 `loader/volatile-update` 时刷新 provider 路由、模型目录和 Models 页目录项。
+- **锁定接缝版本**：dev/peer 范围对齐所面向的 dsh 版本，之后的接缝漂移会在安装期报错，而不是静默不加载。
+- 测试与 typecheck 直接解析已发布的接缝包，不再依赖本地 deepseek-harness 检出。
+
 ### 0.1.2
 
 - **移除浏览器 OAuth 流程**（以及本地回调服务器）：不再有 `/commandcode-login`，不再弹浏览器。API key 直接在 **设置 → 模型 → Command Code → 编辑**（单一 API key 字段）或 `/commandcode-setkey` 填写。
@@ -115,12 +124,12 @@ commandcode-provider:
 
 ```sh
 npm install        # 开发 + 测试依赖
-npm run typecheck  # 针对 harness 接缝源码的严格 tsc
+npm run typecheck  # 针对 harness 接缝包的严格 tsc
 npm run build      # 产出 lib/（ESM + 类型声明）
 npm test           # vitest 套件（线协议、发现、成本、适配器、插件入口）
 ```
 
-typecheck 和 vitest 通过 `tsconfig.json` paths / `vitest.config.ts` 别名从本地 `D:/1codeprojects/deepseek-harness` 检出解析 `@deepseek-ai/*` 接缝包；发布构建只需要 dsh 宿主已提供的 peerDependencies。
+typecheck 和 vitest 从 `node_modules` 解析 `@deepseek-ai/*` 接缝包，版本在 `package.json` 中锁定到本插件所面向的 dsh 版本——即宿主实际加载的同一套已发布 API，无需本地 harness 检出。
 
 ## License
 

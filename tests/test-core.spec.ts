@@ -32,6 +32,11 @@ function deps(overrides: Partial<CoreDependencies> = {}): CoreDependencies {
   return {
     createStream: () => createAssistantMessageEventStream(),
     calculateCost: calculateCommandCodeCost,
+    // Hermetic credential resolution: without these the plugin would read the
+    // developer's own environment and ~/.commandcode/auth.json, which changes
+    // what each test observes.
+    env: {},
+    authPaths: [],
     ...overrides,
   }
 }

@@ -8,6 +8,8 @@ A custom LLM provider plugin for [DeepSeek Harness](https://github.com/deepseek-
 
 > **Disclaimer:** This is an unofficial, community-maintained integration. It is not affiliated with, endorsed by, or supported by Command Code. You need your own Command Code account. Command Code's terms, availability, and pricing apply.
 
+> **Requires dsh 0.2.0-rc.2 or newer.** This release targets the 0.2 LLM and settings seam; on an older dsh the entry will not load. Settings edited on **Settings → Models → Command Code → Edit** apply live — no dsh restart.
+
 ## Quick Start
 
 **Newbie-friendly: one command to install — the plugin mounts itself, no config files to edit.**
@@ -15,7 +17,7 @@ A custom LLM provider plugin for [DeepSeek Harness](https://github.com/deepseek-
 ### 1. Install
 
 ```sh
-dsh plugin --profile web add dsh-commandcode-provider@0.1.3
+dsh plugin --profile web add dsh-commandcode-provider@0.2.0
 ```
 
 The package declares `dsh.bundle`, so `dsh plugin add` installs it AND automatically joins it to the profile's bundle layers — the shipped `cordis.patch.yml` mounts the provider row for you.
@@ -102,6 +104,13 @@ commandcode-provider:
 
 ## Changelog
 
+### 0.2.0
+
+- **Adapted to the dsh 0.2.0-rc.2 seam**: `ToolCallId`, first-class `role: 'tool'` result messages, `JsonObject` tool arguments, and the schema-derived settings form that replaced `installSettingsSection`.
+- **Settings edits apply live**: every config field is a live reference (`Volatile`), so the plugin re-reads settings per use and refreshes its provider route, catalog, and Models-page directory entry on `loader/volatile-update`.
+- **Seam versions pinned** to the dsh release being targeted, so a future seam drift fails at install instead of silently not loading.
+- Tests and typecheck resolve the published seam packages — no local deepseek-harness checkout required.
+
 ### 0.1.2
 
 - **Removed the browser OAuth flow** (and the local callback server): no more `/commandcode-login`, no browser pop-up. The API key is entered directly in **Settings → Models → Command Code → Edit** (single API key field) or via `/commandcode-setkey`.
@@ -115,12 +124,12 @@ commandcode-provider:
 
 ```sh
 npm install        # dev + test dependencies
-npm run typecheck  # strict tsc against the harness seam sources
+npm run typecheck  # strict tsc against the harness seam packages
 npm run build      # emit lib/ (ESM + declarations)
 npm test           # vitest suite (wire protocol, discovery, cost, adapter, plugin entry)
 ```
 
-The typecheck and vitest resolve the `@deepseek-ai/*` seam packages from a local `D:/1codeprojects/deepseek-harness` checkout via `tsconfig.json` paths / `vitest.config.ts` aliases; a published build only needs the peerDependencies a dsh host already provides.
+Typecheck and vitest resolve the `@deepseek-ai/*` seam packages from `node_modules`, pinned in `package.json` to the dsh release this plugin targets — the same published API surface the host loads, with no local harness checkout.
 
 ## License
 

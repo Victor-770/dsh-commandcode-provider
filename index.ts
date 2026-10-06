@@ -24,9 +24,12 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
+// Type-only import: brings the loader's `loader/volatile-update` event into the
+// cordis `Events` map this fiber listens on.
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { CommandCodeAdapter } from './src/adapter.ts'
-import { Config, resolveOptions } from './src/config.ts'
-import type { ResolvedCommandCodeOptions } from './src/config.ts'
+import { plainConfig, resolveOptions } from './src/config.ts'
+import type { Config, ResolvedCommandCodeOptions } from './src/config.ts'
 import { getApiKey } from './src/converters.ts'
 import { PROVIDER, discoverModels } from './src/discovery.ts'
 import { CommandCodeCatalog, formatCommandCodeStatus } from './src/runtime.ts'
@@ -34,7 +37,7 @@ import { CommandCodeCatalog, formatCommandCodeStatus } from './src/runtime.ts'
 export { CommandCodeAdapter } from './src/adapter.ts'
 export type { CommandCodeAdapterOptions } from './src/adapter.ts'
 export { Config } from './src/config.ts'
-export type { CommandCodeModelProfile, ResolvedCommandCodeOptions } from './src/config.ts'
+export type { CommandCodeModelProfile, Options, ResolvedCommandCodeOptions } from './src/config.ts'
 export { PROVIDER, discoverModels } from './src/discovery.ts'
 export { CommandCodeCatalog, formatCommandCodeStatus, redactDiagnosticText } from './src/runtime.ts'
 export { toCommandCodeContext, toStreamChunks } from './src/adapter.ts'
@@ -42,10 +45,12 @@ export { toCommandCodeContext, toStreamChunks } from './src/adapter.ts'
 export const name = 'commandcode-provider'
 export const inject = ['llm']
 
-// Settings namespace. The 0.2 seam derives a plugin's namespace from its
-// profile entry id and no longer exports `settingsNamespace`; this constant is
-// that same id, used as the model-discovery key and as the directory's
-// `settingsNs`.
+// Settings namespace. The 0.2 seam no longer exports `settingsNamespace`: a
+// plugin's namespace is its profile entry id, which the bundled
+// `cordis.patch.yml` fixes as this constant. Both the model-discovery
+// registration and the directory's `settingsNs` must name it exactly, so an
+// install that inserts the plugin under any other id (a hand-written patch, or
+// a nested include that prefixes ids) needs this constant changed with it.
 const NS = 'commandcode-provider'
 const PKG = 'commandcode-provider'
 
@@ -73,24 +78,22 @@ interface UserQuestionsLike {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  let current: () => Config = () => config
-  let lastRaw: Config | undefined
   let lastGood: ResolvedCommandCodeOptions | undefined
+  // Every read goes through the live references: a settings change is committed
+  // *into* them, so the config object keeps its identity while its values move.
+  // A memo keyed on that identity (or on any captured snapshot) would keep
+  // serving the value the plugin started with.
   const options = (): ResolvedCommandCodeOptions => {
-    const raw = current()
-    if (raw === lastRaw && lastGood !== undefined) return lastGood
     try {
-      const next = resolveOptions(raw, launchEnvironmentOf(ctx), defaultModelsCachePath())
-      lastRaw = raw
+      const next = resolveOptions(plainConfig(config), launchEnvironmentOf(ctx), defaultModelsCachePath())
       lastGood = next
       return next
     } catch (error) {
       // Static composition resolves before anything registers, so this branch
-      // only sees a live settings snapshot failing a beyond-schema bound:
-      // keep serving the last good facts and say so once per bad snapshot.
+      // only sees a live settings snapshot failing a beyond-schema bound: keep
+      // serving the last good facts and say so on every refused snapshot.
       if (lastGood === undefined) throw error
-      lastRaw = raw
-      ctx.logger.error('commandcode-provider: keeping the last good configuration after an invalid settings section')
+      ctx.logger.error('commandcode-provider: keeping the last good configuration after an invalid settings snapshot')
       ctx.logger.error(error)
       return lastGood
     }
@@ -148,10 +151,18 @@ export function apply(ctx: Context, config: Config): void {
   ensureDirectory()
 
   // Route effects bind to this apply fiber via the stable `ctx` reference.
-  // The registry captures the retry policy at registration, so no in-place
-  // refresh is needed: a settings change re-applies this plugin, and the fresh
-  // registration below already carries the policy resolved from the new config.
-  ctx.llm.registerAdapter([PROVIDER], adapter)
+  const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
+  let registeredPolicy = options().retryPolicy
+  // The registry captures the retry policy at registration, so it is the one
+  // fact per-request resolution cannot refresh. `replace` re-reads it in one
+  // synchronous registry section: disposing and re-registering instead would
+  // publish an empty route set between the two.
+  const ensureRegistrationFacts = (): void => {
+    const policy = options().retryPolicy
+    if (deepEqualJson(policy, registeredPolicy)) return
+    registration.replace([PROVIDER])
+    registeredPolicy = policy
+  }
 
   // Model discovery for the Models page "fetch available models" action.
   ctx.llm.registerModelDiscovery(NS, (request) => discoverModels(request, catalogModels))
@@ -247,16 +258,33 @@ export function apply(ctx: Context, config: Config): void {
     })
   }
 
-  // Settings wiring. The 0.2 seam no longer takes an imperative settings
-  // section: `SettingsForms.describe()` derives the form from this module's
-  // exported `Config` schema, so that export plus volatile fields (see
-  // `src/config.ts`) is the whole registration.
+  // Settings wiring. The 0.2 seam takes no imperative settings section: the
+  // settings service derives the form from this module's exported `Config`
+  // schema, and that schema marks every field `.volatile()` so the form surfaces
+  // it (see `src/config.ts`).
   //
-  // A settings change restarts this entry's fiber, so `ensureDirectory` and
-  // `ensureCatalogFacts` above already re-run against the new values and no
-  // change hook is needed here. `options()` at the top of this function keeps
-  // validating the composition, so an unserviceable value still fails the
-  // apply rather than being served.
+  // Because the whole schema is volatile, an edit is a *volatile-only* change:
+  // `@deepseek-ai/cordis-plugin-loader` commits the new values into this fiber's
+  // live references and emits `loader/volatile-update` instead of remounting the
+  // entry, so `apply` never runs a second time and nothing above re-registers by
+  // itself. `options()` reads the references afresh, and this hook re-derives
+  // every fact that was captured at registration. Each `ensure*` is contained so
+  // one failure cannot wedge the others.
+  ctx.on('loader/volatile-update', () => {
+    const refreshments: [label: string, ensure: () => void][] = [
+      ['route registration', ensureRegistrationFacts],
+      ['catalog facts', ensureCatalogFacts],
+      ['configurable-provider directory', ensureDirectory],
+    ]
+    for (const [label, ensure] of refreshments) {
+      try {
+        ensure()
+      } catch (error) {
+        ctx.logger.error(`commandcode-provider: keeping the previous ${label} after a refused update`)
+        ctx.logger.error(error)
+      }
+    }
+  })
 
   // Initial catalog load: live fetch with cached fallback; never fails boot.
   void catalog.refresh()

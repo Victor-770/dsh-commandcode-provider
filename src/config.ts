@@ -10,6 +10,7 @@
  * @module dsh-commandcode-provider/config
  */
 
+import type { Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
@@ -54,32 +55,52 @@ export interface CommandCodeModelProfile {
   maxTokens?: number
 }
 
-/** Plugin config: the single Command Code provider profile. */
+/**
+ * Plugin config as the host hands it to `apply`: the parsed schema's own output,
+ * where every declared field is a live reference owned by the loader.
+ *
+ * A settings-only change is committed into these references *in place* and
+ * reported to this fiber as `loader/volatile-update`; the entry is not
+ * remounted and `apply` does not run again. A field is therefore read with
+ * `.get()` at the point of use (see {@link plainConfig}), never captured into a
+ * longer-lived snapshot.
+ */
 export interface Config {
   /** Credential reference (environment-variable name) resolved per request; defaults to `COMMANDCODE_API_KEY`. */
-  apiKeyEnv?: string
+  apiKeyEnv: Volatile<string>
   /** Name shown by selectors and configuration surfaces; defaults to `Command Code`. */
-  displayName?: string
+  displayName: Volatile<string | undefined>
   /** Endpoint base; falls back to `$COMMANDCODE_API_BASE`, then `https://api.commandcode.ai`. */
-  baseURL?: string
+  baseURL: Volatile<string | undefined>
   /** Model discovery endpoint; falls back to `$COMMANDCODE_MODELS_URL`, then the Provider API. */
-  modelsUrl?: string
+  modelsUrl: Volatile<string | undefined>
   /** Model discovery timeout in ms; falls back to `$COMMANDCODE_MODELS_TIMEOUT_MS`, then 10s. */
-  modelsTimeoutMs?: number
+  modelsTimeoutMs: Volatile<number | undefined>
   /** Model catalog cache path; falls back to `$COMMANDCODE_MODELS_CACHE`, then `<dsh home>/commandcode/commandcode-models.json`. */
-  modelsCachePath?: string
+  modelsCachePath: Volatile<string | undefined>
   /** Optional explicit catalog; entries override (or add to) the discovered catalog by id. */
-  models?: CommandCodeModelProfile[]
+  models: Volatile<CommandCodeModelProfile[] | undefined>
   /** Context capacity for a model neither the catalog nor an override sizes (default 262,144). */
-  defaultContextWindow?: number
+  defaultContextWindow: Volatile<number>
   /** Output capability for a model neither the catalog nor an override sizes (default 32,768). */
-  defaultMaxTokens?: number
+  defaultMaxTokens: Volatile<number>
   /** HTTP request timeout in ms (applied per attempt). */
-  timeoutMs?: number
+  timeoutMs: Volatile<number | undefined>
   /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
-  streamIdleTimeoutMs?: number
+  streamIdleTimeoutMs: Volatile<number>
   /** Provider-owned model-request retry policy; omission uses normal defaults. */
-  retryPolicy?: RetryPolicyConfig
+  retryPolicy: Volatile<RetryPolicyConfig | undefined>
+}
+
+/**
+ * Plain values behind {@link Config}'s references, one write per settings read.
+ *
+ * Every field stays optional: an absent field is indistinguishable from an
+ * absent snapshot value, and {@link resolveOptions} applies the same default for
+ * both.
+ */
+export type Options = {
+  [K in keyof Config]?: Config[K] extends Volatile<infer T> ? Exclude<T, undefined> : never
 }
 
 const modelProfile: z<CommandCodeModelProfile> = z.object({
@@ -92,27 +113,59 @@ const modelProfile: z<CommandCodeModelProfile> = z.object({
 /**
  * Runtime schema for {@link Config}.
  *
- * Marked volatile as a whole: dsh 0.2 generates a plugin's settings form from
- * the module's exported `Config` and only surfaces branches whose fields carry
- * the volatile flag (`volatileForm` in `@deepseek-ai/dsh-settings`). The whole
- * schema is user-editable here, which is what the old imperative
- * `installSettingsSection(ctx, ns, Config, …)` registered, so the flag belongs
- * on the root rather than on each field.
+ * Every field carries `.volatile()`, and the flag belongs on each field rather
+ * than on the root object: dsh 0.2 derives the settings form from this exported
+ * schema and surfaces exactly the volatile fields, while marking the *root*
+ * volatile would make the whole parsed config a single reference — `apply` would
+ * then receive `Volatile<Config>` instead of a config whose fields are
+ * references, and every plain field read would be `undefined`. Schemastery types
+ * the two shapes differently, so a root-level flag cannot be hidden behind a
+ * cast.
+ *
+ * The mode each field resolves to is what {@link Config} declares: `.volatile()`
+ * alone yields `Volatile<T | undefined>`, and a preceding `.default()` yields
+ * `Volatile<T>`.
  */
-export const Config: z<Config> = z.object({
-  apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV),
-  displayName: z.string(),
-  baseURL: z.string(),
-  modelsUrl: z.string(),
-  modelsTimeoutMs: z.natural(),
-  modelsCachePath: z.string(),
-  models: z.array(modelProfile),
-  defaultContextWindow: z.number().step(1).min(1).default(DEFAULT_CONTEXT_WINDOW),
-  defaultMaxTokens: z.number().step(1).min(1).default(DEFAULT_MAX_TOKENS),
-  timeoutMs: z.natural(),
-  streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
-  retryPolicy: RetryPolicySchema,
-}).volatile() as z<Config>
+export const Config = z.object({
+  apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV).volatile(),
+  displayName: z.string().volatile(),
+  baseURL: z.string().volatile(),
+  modelsUrl: z.string().volatile(),
+  modelsTimeoutMs: z.natural().volatile(),
+  modelsCachePath: z.string().volatile(),
+  models: z.array(modelProfile).volatile(),
+  defaultContextWindow: z.number().step(1).min(1).default(DEFAULT_CONTEXT_WINDOW).volatile(),
+  defaultMaxTokens: z.number().step(1).min(1).default(DEFAULT_MAX_TOKENS).volatile(),
+  timeoutMs: z.natural().volatile(),
+  streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS).volatile(),
+  retryPolicy: RetryPolicySchema.volatile(),
+})
+
+/** cosmokit's shared live-reference protocol, identified across duplicate installs. */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+
+/** Whether a parsed config value is one of the schema's live references. */
+function isVolatileRef(value: unknown): value is Volatile<unknown> {
+  return typeof value === 'object' && value !== null && VOLATILE_WRITE in value
+}
+
+/**
+ * Read the current value behind every reference of a parsed {@link Config}.
+ *
+ * The plugin reads config through this on each use rather than caching a
+ * snapshot: a live update replaces the values inside the very same references,
+ * so a captured {@link Options} would silently outlive the setting it came from.
+ * @param config - Parsed plugin config.
+ * @returns Plain options for {@link resolveOptions}.
+ */
+export function plainConfig(config: Config): Options {
+  const plain: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(config)) {
+    const snapshot = isVolatileRef(value) ? value.get() : value
+    if (snapshot !== undefined) plain[key] = snapshot
+  }
+  return plain as Options
+}
 
 /** Validated profile with every adapter-owned default resolved. */
 export interface ResolvedCommandCodeOptions {
@@ -147,16 +200,16 @@ export interface ResolveOptionsEnvironment {
 }
 
 /**
- * The one explicit resolve step from raw config to validated provider facts.
+ * The one explicit resolve step from plain config to validated provider facts.
  * Environment layers supply endpoint/discovery/cache overrides only from
  * trusted layers; the credential itself never resolves here.
- * @param config - raw plugin config or resolved settings snapshot.
+ * @param config - plain values, typically one {@link plainConfig} reading.
  * @param environment - the run's environment layers, or `undefined` outside the CLI.
  * @param defaultCachePath - the computed default cache path (based on the DSH home).
  * @returns validated provider facts plus the credential reference.
  */
 export function resolveOptions(
-  config: Config,
+  config: Options,
   environment: ResolveOptionsEnvironment | undefined,
   defaultCachePath: string,
 ): ResolvedCommandCodeOptions {

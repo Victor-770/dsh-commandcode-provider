@@ -1,8 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCatalog, resolveOptions, DEFAULT_API_KEY_ENV } from '../src/config.ts'
-import type { Config } from '../src/config.ts'
+import { isVolatile } from '@deepseek-ai/cosmokit'
+import z from '@deepseek-ai/schemastery'
+import { Config, plainConfig, resolveCatalog, resolveOptions, DEFAULT_API_KEY_ENV } from '../src/config.ts'
+import type { Options } from '../src/config.ts'
 
 const env = { get: (name: string) => name === 'COMMANDCODE_API_BASE' ? { value: 'https://gateway.example' } : undefined }
+
+/** Parse raw config exactly as the loader does before calling `apply`. */
+function parse(raw: Record<string, unknown>): Config {
+  const [parsed] = z.resolve(raw as never, Config, {})
+  if (parsed === undefined) throw new Error('schema resolution produced no value')
+  return parsed
+}
+
+describe('Config schema', () => {
+  it('resolves every field to a live reference, and never the config itself', () => {
+    const parsed = parse({ displayName: 'Mine', modelsUrl: 'https://gateway.example/models' })
+    // A root-level `.volatile()` would make the whole config one reference and
+    // hand `apply` a `Volatile<Config>`, where every field read is undefined.
+    expect(isVolatile(parsed)).toBe(false)
+    for (const [field, value] of Object.entries(parsed)) {
+      expect(isVolatile(value), `field ${field}`).toBe(true)
+    }
+  })
+
+  it('plainConfig reads the current value behind each reference', () => {
+    const parsed = parse({ displayName: 'Mine', timeoutMs: 1234, models: [{ id: 'm1' }] })
+    const resolved = resolveOptions(plainConfig(parsed), undefined, 'cache.json')
+    expect(resolved.displayName).toBe('Mine')
+    expect(resolved.timeoutMs).toBe(1234)
+    expect(resolved.catalogOverrides.size).toBe(1)
+  })
+
+  it('plainConfig omits absent snapshot values instead of passing undefined', () => {
+    expect(plainConfig(parse({}))).not.toHaveProperty('displayName')
+  })
+})
 
 describe('resolveOptions', () => {
   it('applies defaults and environment overrides', () => {
@@ -20,7 +53,7 @@ describe('resolveOptions', () => {
   })
 
   it('prefers explicit config over environment', () => {
-    const config: Config = {
+    const config: Options = {
       apiKeyEnv: 'CC_KEY',
       displayName: 'My Command Code',
       baseURL: 'https://x.example',

@@ -193,6 +193,8 @@ function textOnlyContext(options: GenerateOptions): ContextLike {
     // travels with every request instead — so they contribute nothing here.
     if (message.role === 'developer') continue
     const text = flattenText(message)
+    // A user message with no text renders nothing on this wire (its images were
+    // already refused above), so it is dropped rather than sent empty.
     if (text.length > 0) messages.push({ role: 'user', content: text })
   }
   return piContext(options, messages)
@@ -215,7 +217,10 @@ async function toPiContextWithImages(options: GenerateOptions, attachments: Atta
       continue
     }
     // A tool result is its own `role: 'tool'` message carrying `toolCallId`
-    // directly; images inside it keep flowing through `userContent`.
+    // directly. Its content goes through `userContent` so a durable image
+    // reference resolves exactly as it does in user content, but the pi
+    // tool-result vocabulary is text-only: image parts are resolved here and
+    // then dropped, and only the text below reaches the provider.
     if (message.role === 'tool') {
       const resultContent = await userContent(message.content, attachments)
       const text = typeof resultContent === 'string'
