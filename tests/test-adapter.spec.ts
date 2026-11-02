@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
 import {
   buildModelLike,
@@ -11,6 +12,7 @@ import {
   toStreamChunks,
 } from '../src/adapter.ts'
 import { resolveOptions } from '../src/config.ts'
+import { messagesToCC } from '../src/converters.ts'
 import type { CommandCodeModel } from '../src/models.ts'
 
 const MODEL: CommandCodeModel = {
@@ -106,12 +108,67 @@ describe('toCommandCodeContext', () => {
   })
 })
 
+const ATTACHMENTS = {
+  readImage: async () => ({ data: new Uint8Array([1, 2, 3]), ref: { mediaType: 'image/png' } }),
+} as unknown as AttachmentStore
+
+describe('toCommandCodeContext tool-result images', () => {
+  it('keeps a tool-result image and lifts it into a user message on the wire', async () => {
+    const ctx = await toCommandCodeContext({
+      provider: 'commandcode',
+      model: 'deepseek/deepseek-v4.1-flash-fast',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'look' }] } as never,
+        { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'read_image', arguments: '{}' }] } as never,
+        {
+          role: 'tool',
+          toolCallId: 'c1',
+          content: [
+            { type: 'text', text: 'image/png image, 160x120 px, 609 bytes' },
+            { type: 'image', attachment: { attachmentId: 'sha256:probe', mediaType: 'image/png', bytes: 3, width: 160, height: 120 } },
+          ],
+        } as never,
+      ],
+    } as unknown as GenerateOptions, ATTACHMENTS)
+
+    const messages = ctx.messages ?? []
+    expect(messages[2]).toMatchObject({
+      role: 'toolResult',
+      toolCallId: 'c1',
+      toolName: 'read_image',
+      content: [
+        { type: 'text', text: 'image/png image, 160x120 px, 609 bytes' },
+        { type: 'image', data: 'AQID', mimeType: 'image/png' },
+      ],
+    })
+
+    const wire = messagesToCC(messages, { allowImages: true })
+    expect(wire[wire.length - 1]).toEqual({
+      role: 'user',
+      content: [{ type: 'image', image: 'data:image/png;base64,AQID', mimeType: 'image/png' }],
+    })
+  })
+
+  it('keeps a text-only tool result unchanged', async () => {
+    const ctx = await toCommandCodeContext({
+      provider: 'commandcode',
+      model: 'deepseek/deepseek-v4-flash',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'look' }] } as never,
+        { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'fs_read', arguments: '{}' }] } as never,
+        { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'body' }] } as never,
+      ],
+    } as unknown as GenerateOptions, ATTACHMENTS)
+    expect(ctx.messages?.[2]).toMatchObject({ role: 'toolResult', toolName: 'fs_read', content: [{ type: 'text', text: 'body' }] })
+  })
+})
+
 describe('buildModelLike', () => {
   it('carries cost, reasoning, and thinking metadata', () => {
     const m = buildModelLike(MODEL, 'commandcode')
     expect(m.provider).toBe('commandcode')
     expect(m.reasoning).toBe(true)
-    expect(m.thinking?.efforts).toEqual(['high', 'max'])
+    expect(m.thinking?.efforts).toEqual(['off', 'high', 'max'])
     expect(m.cost).toBeDefined()
     expect(m.maxTokens).toBe(65_536)
   })
@@ -192,8 +249,8 @@ describe('CommandCodeAdapter', () => {
     expect(info.name).toBe(MODEL.name)
     expect(info.context?.contextWindow).toBe(200_000)
     expect(info.defaultMaxTokens).toBe(65_536)
-    expect(info.reasoning?.efforts.map((e) => e.id)).toEqual(['high', 'max'])
-    expect(info.reasoning?.efforts[0]?.name).toBe('High')
+    expect(info.reasoning?.efforts.map((e) => e.id)).toEqual(['off', 'high', 'max'])
+    expect(info.reasoning?.efforts[1]?.name).toBe('High')
   })
 
   it('rejects unknown models', async () => {
