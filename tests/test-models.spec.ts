@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  MODEL_MAX_OUTPUT_TOKENS,
+  MODEL_REASONING,
   commandCodeModelsFromApiResponse,
   commandCodeModelsFromCache,
   getModelsTimeoutMs,
@@ -57,15 +59,38 @@ describe('reasoning metadata', () => {
       max: 'max',
     })
     const meta = thinkingMetadataForModel('deepseek/deepseek-v4-flash')
-    expect(meta?.thinking.efforts).toEqual(['high', 'max'])
+    expect(meta?.thinking.efforts).toEqual(['off', 'high', 'max'])
     expect(meta?.thinking.mode).toBe('effort')
     expect(thinkingMetadataForModel('unknown/model')).toBeUndefined()
   })
 
-  it('exposes image modalities only for known vision models', () => {
+  it('keeps reasoning-capable models that publish no selectable efforts', () => {
+    expect(MODEL_REASONING['moonshotai/Kimi-K2.7-Code']).toBe(true)
+    expect(thinkingMetadataForModel('moonshotai/Kimi-K2.7-Code')).toBeUndefined()
+  })
+
+  it('exposes the catalog image modalities', () => {
     expect(modelSupportsImageInput('claude-sonnet-4-6')).toBe(true)
+    expect(modelSupportsImageInput('deepseek/deepseek-v4.1-flash-fast')).toBe(true)
     expect(modelSupportsImageInput('deepseek/deepseek-v4-flash')).toBe(false)
     expect(inputModalitiesForModel('unknown/model')).toEqual(['text'])
+  })
+
+  it('applies the advertised output-token caps', () => {
+    expect(MODEL_MAX_OUTPUT_TOKENS['Qwen/Qwen3.8-Max-Prime']).toBe(131_072)
+    const models = commandCodeModelsFromApiResponse({
+      object: 'list',
+      data: [
+        { id: 'Qwen/Qwen3.8-Max-Prime', name: 'Qwen 3.8 Max Prime', context_length: 1_000_000 },
+        { id: 'stealth/glyph-cluster:free', name: 'Glyph Cluster', context_length: 256_000 },
+      ],
+    })
+    expect(models[0]?.maxTokens).toBe(131_072)
+    expect(models[1]?.maxTokens).toBe(256_000)
+    expect(commandCodeModelsFromCache({
+      version: 1,
+      models: [{ id: 'Qwen/Qwen3.8-Max-Prime', name: 'Qwen (CC)', reasoning: true, contextWindow: 1_000_000, maxTokens: 65_536 }],
+    })[0]?.maxTokens).toBe(131_072)
   })
 })
 

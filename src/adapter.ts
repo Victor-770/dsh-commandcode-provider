@@ -90,7 +90,7 @@ interface ImagePart {
 type PiMessageLike =
   | { role: 'user'; content: string | ({ type: 'text'; text: string } | ImagePart)[] }
   | { role: 'assistant'; content: ({ type: 'text'; text: string } | { type: 'toolCall'; id: string; name: string; arguments: JsonObject })[] }
-  | { role: 'toolResult'; toolCallId: string; toolName: string; content: { type: 'text'; text: string }[]; isError: boolean }
+  | { role: 'toolResult'; toolCallId: string; toolName: string; content: ({ type: 'text'; text: string } | ImagePart)[]; isError: boolean }
 
 /** One assistant message converted to the pi-plugin vocabulary; tool names are recorded for later results. */
 function toPiAssistant(
@@ -218,19 +218,24 @@ async function toPiContextWithImages(options: GenerateOptions, attachments: Atta
     }
     // A tool result is its own `role: 'tool'` message carrying `toolCallId`
     // directly. Its content goes through `userContent` so a durable image
-    // reference resolves exactly as it does in user content, but the pi
-    // tool-result vocabulary is text-only: image parts are resolved here and
-    // then dropped, and only the text below reaches the provider.
+    // reference resolves exactly as it does in user content. Image parts stay
+    // attached to the tool-result content: `messagesToCC` lifts each one into a
+    // following user message, the only wire shape that carries a tool-produced
+    // image upstream. Dropping them here made every image-returning tool,
+    // `read_image` included, look text-only to the model.
     if (message.role === 'tool') {
       const resultContent = await userContent(message.content, attachments)
-      const text = typeof resultContent === 'string'
-        ? resultContent || '(no output)'
-        : resultContent.map((part) => part.type === 'text' ? part.text : '').join('') || '(no output)'
+      const parts: ({ type: 'text'; text: string } | ImagePart)[] = typeof resultContent === 'string'
+        ? [{ type: 'text', text: resultContent }]
+        : resultContent.filter((part) => part.type === 'text' || part.type === 'image')
+      if (!parts.some((part) => part.type === 'text' && part.text.length > 0)) {
+        parts.unshift({ type: 'text', text: '(no output)' })
+      }
       messages.push({
         role: 'toolResult',
         toolCallId: message.toolCallId,
         toolName: toolNames.get(message.toolCallId) ?? 'unknown',
-        content: [{ type: 'text', text }],
+        content: parts,
         isError: message.isError ?? false,
       })
       continue
