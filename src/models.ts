@@ -1,8 +1,14 @@
 /**
  * Command Code model discovery, offline cache, reasoning metadata, and input
- * modalities. Ported from pi-commandcode-provider's `src/models.ts` so the
- * catalog behavior (live fetch, cached fallback, per-model enrichment) is
- * identical to the pi plugin.
+ * modalities.
+ *
+ * The per-model tables below are a snapshot of the model catalog bundled with
+ * `command-code@1.88.2` (`dist/cli.mjs`), cross-checked against the live
+ * Provider API listing and the capability table on
+ * https://commandcode.ai/docs/reference/cli/models. The Provider API discloses
+ * neither input modalities nor reasoning efforts, so this snapshot is the only
+ * upstream evidence for them; models that are not listed remain text-only so a
+ * newly discovered id never claims image support without evidence.
  *
  * @module dsh-commandcode-provider/models
  */
@@ -19,27 +25,34 @@ const MODEL_CACHE_VERSION = 1
 export type CommandCodeInputType = 'text' | 'image'
 
 /**
- * Model input modalities from the command-code@1.15.1 bundled catalog.
- * Models omitted here remain text-only so newly discovered IDs never claim
- * image support without upstream evidence.
+ * Model input modalities from the command-code@1.88.2 bundled catalog.
+ * Models omitted here remain text-only.
  */
 export const MODEL_INPUT_MODALITIES: Readonly<Record<string, readonly CommandCodeInputType[]>> = {
-  'MiniMaxAI/MiniMax-M3': ['text', 'image'],
-  'Qwen/Qwen3.6-Plus': ['text', 'image'],
-  'Qwen/Qwen3.7-Flash': ['text', 'image'],
-  'Qwen/Qwen3.7-Plus': ['text', 'image'],
-  'Qwen/Qwen3.8-Max': ['text', 'image'],
   'claude-fable-5': ['text', 'image'],
+  'claude-fable-5-1': ['text', 'image'],
   'claude-haiku-4-5-20251001': ['text', 'image'],
+  'claude-haiku-5-5': ['text', 'image'],
   'claude-opus-4-7': ['text', 'image'],
   'claude-opus-4-8': ['text', 'image'],
   'claude-opus-5': ['text', 'image'],
+  'claude-opus-5-5': ['text', 'image'],
   'claude-sonnet-4-6': ['text', 'image'],
   'claude-sonnet-5': ['text', 'image'],
+  'claude-sonnet-5-5': ['text', 'image'],
+  'deepseek/deepseek-v4-flash': ['text'],
+  'deepseek/deepseek-v4-flash-fast': ['text'],
+  'deepseek/deepseek-v4-flash-vision-exp': ['text', 'image'],
+  'deepseek/deepseek-v4-pro': ['text'],
+  'deepseek/deepseek-v4.1-flash': ['text', 'image'],
+  'deepseek/deepseek-v4.1-flash-fast': ['text', 'image'],
   'google/gemini-3.1-flash-lite': ['text', 'image'],
   'google/gemini-3.5-flash': ['text', 'image'],
   'google/gemini-3.5-flash-lite': ['text', 'image'],
   'google/gemini-3.6-flash': ['text', 'image'],
+  'google/gemini-3.7-flash': ['text', 'image'],
+  'google/gemini-3.8-flash': ['text', 'image'],
+  'google/gemini-4-argon': ['text', 'image'],
   'gpt-5.3-codex': ['text', 'image'],
   'gpt-5.4': ['text', 'image'],
   'gpt-5.4-mini': ['text', 'image'],
@@ -47,20 +60,71 @@ export const MODEL_INPUT_MODALITIES: Readonly<Record<string, readonly CommandCod
   'gpt-5.6-luna': ['text', 'image'],
   'gpt-5.6-sol': ['text', 'image'],
   'gpt-5.6-terra': ['text', 'image'],
+  'gpt-6-astra': ['text', 'image'],
+  'gpt-6-luna': ['text', 'image'],
+  'gpt-6-sol': ['text', 'image'],
+  'gpt-6.1-sol': ['text', 'image'],
+  'gpt-6.1-terra': ['text', 'image'],
+  'inclusionai/ling-3.1-flash': ['text'],
+  'inclusionai/ling-3.1-flash-1019': ['text'],
+  'meituan/LongCat-2.0': ['text'],
   'meta/muse-spark-1.1': ['text', 'image'],
   'meta/muse-spark-1.2': ['text', 'image'],
   'meta/muse-spark-1.2-contributor': ['text', 'image'],
+  'meta/muse-spark-1.3': ['text', 'image'],
+  'meta/muse-spark-1.3-contributor': ['text', 'image'],
+  'meta/muse-spark-open': ['text', 'image'],
+  'meta/muse-wonder-1.0': ['text', 'image'],
+  'minimax/minimax-m3.1-flash': ['text', 'image'],
+  'MiniMaxAI/MiniMax-M2.5': ['text'],
+  'MiniMaxAI/MiniMax-M2.7': ['text'],
+  'MiniMaxAI/MiniMax-M3': ['text', 'image'],
+  'mistral/mistral-large-4': ['text', 'image'],
   'moonshotai/Kimi-K2.5': ['text', 'image'],
   'moonshotai/Kimi-K2.6': ['text', 'image'],
   'moonshotai/Kimi-K2.7-Code': ['text', 'image'],
   'moonshotai/Kimi-K2.7-Code-Highspeed': ['text', 'image'],
   'moonshotai/Kimi-K3': ['text', 'image'],
+  'moonshotai/Kimi-K3.1-Pro': ['text', 'image'],
+  'nvidia/nemotron-3-ultra-550b-a55b': ['text'],
+  'nvidia/nemotron-3.5-super-vl': ['text', 'image'],
+  'ornith/ornith-1.5-122b': ['text', 'image'],
+  'poolside/laguna-s-2.1-free': ['text'],
+  'Qwen/Qwen3.6-Max-Preview': ['text'],
+  'Qwen/Qwen3.6-Plus': ['text', 'image'],
+  'Qwen/Qwen3.7-Flash': ['text', 'image'],
+  'Qwen/Qwen3.7-Max': ['text'],
+  'Qwen/Qwen3.7-Plus': ['text', 'image'],
+  'Qwen/Qwen3.8-27B': ['text', 'image'],
+  'Qwen/Qwen3.8-Flash': ['text', 'image'],
+  'Qwen/Qwen3.8-Max': ['text', 'image'],
+  'Qwen/Qwen3.8-Max-0902': ['text', 'image'],
+  'Qwen/Qwen3.8-Max-Prime': ['text', 'image'],
+  'Qwen/Qwen3.8-Omni-Flash': ['text', 'image'],
+  'reflection/beam:free': ['text'],
   'sakana/fugu-ultra': ['text', 'image'],
+  'stealth/crouton-alpha': ['text', 'image'],
+  'stealth/glyph-cluster:free': ['text'],
+  'stepfun/Step-3.5-Flash': ['text'],
   'stepfun/Step-3.7-Flash': ['text', 'image'],
+  'stepfun/Step-5-Preview': ['text', 'image'],
+  'tencent/hy3-paid': ['text'],
+  'tencent/hy4-preview': ['text'],
   'thinkingmachines/inkling': ['text', 'image'],
   'thinkingmachines/inkling-small': ['text', 'image'],
   'xai/grok-4.5': ['text', 'image'],
-  'xiaomi/mimo-v2.5': ['text', 'image'],
+  'xai/grok-4.6': ['text', 'image'],
+  'xai/grok-4.7': ['text', 'image'],
+  'xiaomi/mimo-v2.6-flash': ['text', 'image'],
+  'xiaomi/mimo-v2.6-pro': ['text', 'image'],
+  'xiaomi/mimo-v2.6-pro-ultraspeed': ['text', 'image'],
+  'z-ai/glm-5.3-flash': ['text', 'image'],
+  'z-ai/glm-5.3-flashx': ['text', 'image'],
+  'zai-org/GLM-5': ['text'],
+  'zai-org/GLM-5.1': ['text'],
+  'zai-org/GLM-5.2': ['text'],
+  'zai-org/GLM-5.2-Fast': ['text'],
+  'zai-org/GLM-5.3': ['text'],
 }
 
 const TEXT_INPUT_ONLY = ['text'] as const
@@ -80,21 +144,34 @@ type CommandCodeReasoningEffort = Exclude<PiThinkingLevel, 'off'>
 /**
  * Per-model reasoning efforts supported by Command Code's generate endpoint.
  *
- * The Provider API does not expose reasoning metadata. This is an exact
- * snapshot of `reasoningEfforts` from the command-code@1.15.1 model catalog
- * (`packages/shared/src/model-catalog.ts`). Models omitted here let Command
- * Code choose their reasoning depth, matching the CLI.
+ * Snapshot of `reasoningEfforts` from the command-code@1.88.2 model catalog.
+ * The `off` entry is dropped because it selects no reasoning effort at all.
+ * Models omitted here let Command Code choose their reasoning depth.
  */
 export const MODEL_EFFORTS: Readonly<Record<string, readonly CommandCodeReasoningEffort[]>> = {
-  'Qwen/Qwen3.8-Max': ['low', 'medium', 'xhigh'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-haiku-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-7': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-opus-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-opus-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-4-6': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-sonnet-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'deepseek/deepseek-v4-flash': ['high', 'max'],
+  'deepseek/deepseek-v4-flash-fast': ['low', 'high', 'max'],
+  'deepseek/deepseek-v4-flash-vision-exp': ['high', 'max'],
   'deepseek/deepseek-v4-pro': ['high', 'max'],
+  'deepseek/deepseek-v4.1-flash': ['low', 'high', 'max'],
+  'deepseek/deepseek-v4.1-flash-fast': ['low', 'high', 'max'],
+  'google/gemini-3.1-flash-lite': ['low', 'medium', 'high'],
+  'google/gemini-3.5-flash': ['low', 'medium', 'high'],
+  'google/gemini-3.5-flash-lite': ['low', 'medium', 'high'],
+  'google/gemini-3.6-flash': ['low', 'medium', 'high'],
+  'google/gemini-3.7-flash': ['low', 'medium', 'high'],
+  'google/gemini-3.8-flash': ['low', 'medium', 'high'],
+  'google/gemini-4-argon': ['low', 'medium', 'high'],
   'gpt-5.3-codex': ['low', 'medium', 'high', 'xhigh'],
   'gpt-5.4': ['low', 'medium', 'high', 'xhigh'],
   'gpt-5.4-mini': ['low', 'medium', 'high'],
@@ -102,13 +179,45 @@ export const MODEL_EFFORTS: Readonly<Record<string, readonly CommandCodeReasonin
   'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-5.6-terra': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'google/gemini-3.1-flash-lite': ['low', 'medium', 'high'],
-  'google/gemini-3.5-flash': ['low', 'medium', 'high'],
-  'google/gemini-3.5-flash-lite': ['low', 'medium', 'high'],
-  'google/gemini-3.6-flash': ['low', 'medium', 'high'],
+  'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gpt-6.1-terra': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'inclusionai/ling-3.1-flash': ['low', 'medium', 'high'],
+  'inclusionai/ling-3.1-flash-1019': ['low', 'high', 'max'],
+  'meta/muse-spark-1.1': ['low', 'medium', 'high', 'xhigh'],
+  'meta/muse-spark-1.2': ['low', 'medium', 'high', 'xhigh'],
+  'meta/muse-spark-1.2-contributor': ['low', 'medium', 'high', 'xhigh'],
+  'meta/muse-spark-1.3': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'meta/muse-spark-1.3-contributor': ['low', 'medium', 'high', 'xhigh'],
+  'meta/muse-spark-open': ['low', 'medium', 'high'],
+  'meta/muse-wonder-1.0': ['low', 'medium', 'high', 'xhigh'],
+  'minimax/minimax-m3.1-flash': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'MiniMaxAI/MiniMax-M3': ['low', 'medium', 'high'],
+  'mistral/mistral-large-4': ['low', 'medium', 'high'],
+  'moonshotai/Kimi-K3': ['low', 'high', 'max'],
+  'moonshotai/Kimi-K3.1-Pro': ['low', 'high', 'max'],
+  'nvidia/nemotron-3.5-super-vl': ['low', 'medium', 'high'],
+  'Qwen/Qwen3.8-27B': ['low', 'medium', 'xhigh'],
+  'Qwen/Qwen3.8-Flash': ['low', 'medium', 'xhigh'],
+  'Qwen/Qwen3.8-Max': ['low', 'medium', 'xhigh'],
+  'Qwen/Qwen3.8-Max-0902': ['low', 'medium', 'xhigh'],
+  'Qwen/Qwen3.8-Max-Prime': ['low', 'medium', 'xhigh'],
+  'Qwen/Qwen3.8-Omni-Flash': ['low', 'medium', 'xhigh'],
+  'reflection/beam:free': ['low', 'medium', 'high', 'xhigh', 'max'],
   'sakana/fugu-ultra': ['high', 'xhigh'],
+  'stealth/crouton-alpha': ['low', 'high', 'max'],
+  'stealth/glyph-cluster:free': ['low', 'medium', 'high', 'xhigh'],
+  'stepfun/Step-5-Preview': ['low', 'medium', 'high'],
+  'tencent/hy4-preview': ['low', 'medium', 'high'],
   'xai/grok-4.5': ['low', 'medium', 'high'],
+  'xai/grok-4.6': ['low', 'medium', 'high', 'xhigh'],
+  'xai/grok-4.7': ['low', 'medium', 'high', 'xhigh'],
+  'z-ai/glm-5.3-flash': ['low', 'high', 'max'],
+  'z-ai/glm-5.3-flashx': ['low', 'high', 'max'],
   'zai-org/GLM-5.2': ['high', 'max'],
+  'zai-org/GLM-5.3': ['low', 'high', 'max'],
 }
 
 const PI_THINKING_LEVELS: readonly PiThinkingLevel[] = [
