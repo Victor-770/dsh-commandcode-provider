@@ -90,7 +90,7 @@ interface ImagePart {
 type PiMessageLike =
   | { role: 'user'; content: string | ({ type: 'text'; text: string } | ImagePart)[] }
   | { role: 'assistant'; content: ({ type: 'text'; text: string } | { type: 'toolCall'; id: string; name: string; arguments: JsonObject })[] }
-  | { role: 'toolResult'; toolCallId: string; toolName: string; content: { type: 'text'; text: string }[]; isError: boolean }
+  | { role: 'toolResult'; toolCallId: string; toolName: string; content: ({ type: 'text'; text: string } | ImagePart)[]; isError: boolean }
 
 /** One assistant message converted to the pi-plugin vocabulary; tool names are recorded for later results. */
 function toPiAssistant(
@@ -218,19 +218,19 @@ async function toPiContextWithImages(options: GenerateOptions, attachments: Atta
     }
     // A tool result is its own `role: 'tool'` message carrying `toolCallId`
     // directly. Its content goes through `userContent` so a durable image
-    // reference resolves exactly as it does in user content, but the pi
-    // tool-result vocabulary is text-only: image parts are resolved here and
-    // then dropped, and only the text below reaches the provider.
+    // reference resolves exactly as it does in user content. Images are kept:
+    // the converter appends them as their own user message right after this
+    // tool result, which is the only shape the Command Code wire has for them.
     if (message.role === 'tool') {
       const resultContent = await userContent(message.content, attachments)
-      const text = typeof resultContent === 'string'
-        ? resultContent || '(no output)'
-        : resultContent.map((part) => part.type === 'text' ? part.text : '').join('') || '(no output)'
+      const parts = typeof resultContent === 'string'
+        ? [{ type: 'text' as const, text: resultContent || '(no output)' }]
+        : resultContent.length > 0 ? resultContent : [{ type: 'text' as const, text: '(no output)' }]
       messages.push({
         role: 'toolResult',
         toolCallId: message.toolCallId,
         toolName: toolNames.get(message.toolCallId) ?? 'unknown',
-        content: [{ type: 'text', text }],
+        content: parts,
         isError: message.isError ?? false,
       })
       continue
@@ -254,6 +254,31 @@ export function toCommandCodeContext(options: GenerateOptions): ContextLike
 export function toCommandCodeContext(options: GenerateOptions, attachments: AttachmentStore): Promise<ContextLike>
 export function toCommandCodeContext(options: GenerateOptions, attachments?: AttachmentStore): ContextLike | Promise<ContextLike> {
   return attachments === undefined ? textOnlyContext(options) : toPiContextWithImages(options, attachments)
+}
+
+/**
+ * Resolve a requested model id against the catalog the way the Command Code
+ * CLI does: an exact id wins, then a case-insensitive id match, then the
+ * unique model whose id ends with `/<requested>` so short names such as
+ * `kimi-k2.5` select `moonshotai/Kimi-K2.5`. Ambiguous short names fail
+ * rather than guess.
+ */
+export function resolveCatalogModel(
+  catalog: readonly CommandCodeModel[],
+  requested: string,
+): CommandCodeModel | undefined {
+  const exact = catalog.find((entry) => entry.id === requested)
+  if (exact !== undefined) return exact
+
+  const lowered = requested.toLowerCase()
+  const caseInsensitive = catalog.filter((entry) => entry.id.toLowerCase() === lowered)
+  if (caseInsensitive.length === 1) return caseInsensitive[0]
+
+  const short = catalog.filter((entry) => {
+    const slash = entry.id.lastIndexOf('/')
+    return slash >= 0 && entry.id.slice(slash + 1).toLowerCase() === lowered
+  })
+  return short.length === 1 ? short[0] : undefined
 }
 
 /** Build the pi-plugin model descriptor one request streams against. */
@@ -463,7 +488,7 @@ export class CommandCodeAdapter extends LlmAdapter {
   }
 
   private modelOf(provider: string, model: string): CommandCodeModel {
-    const found = this.config.catalog().find((entry) => entry.id === model)
+    const found = resolveCatalogModel(this.config.catalog(), model)
     if (found === undefined) {
       throw new LlmError(`Command Code provider "${provider}" has no configured model "${model}"`, 'UNKNOWN_MODEL')
     }

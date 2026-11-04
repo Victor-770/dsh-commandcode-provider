@@ -5,6 +5,7 @@ import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
 import {
   buildModelLike,
   CommandCodeAdapter,
+  resolveCatalogModel,
   mapStopReason,
   mapUsage,
   toCommandCodeContext,
@@ -234,5 +235,129 @@ describe('CommandCodeAdapter', () => {
       resolveAttachments: () => undefined,
     })
     await expect(chunks(adapter, request(), async () => sseResponse([]))).rejects.toMatchObject({ code: 'MISSING_CREDENTIAL' })
+  })
+})
+
+describe('image input regressions', () => {
+  const VISION_MODEL: CommandCodeModel = {
+    id: 'deepseek/deepseek-v4.1-flash-fast',
+    name: 'DeepSeek V4.1 Flash Fast (CC)',
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxTokens: 65_536,
+  }
+  const VISION_CATALOG: CommandCodeModel[] = [VISION_MODEL]
+
+  const imageStore = {
+    readImage: async () => ({
+      data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      ref: { mediaType: 'image/png' as const },
+    }),
+  }
+
+  function visionOptions() {
+    return resolveOptions({}, undefined, 'cache.json')
+  }
+
+  it('declares image input for a vision model in the catalog', async () => {
+    const adapter = new CommandCodeAdapter({
+      options: visionOptions,
+      catalog: () => VISION_CATALOG,
+      resolveApiKey: async () => 'k',
+      resolveAttachments: () => imageStore as never,
+    })
+    const info = await adapter.resolveModel('commandcode', VISION_MODEL.id)
+    expect(info.inputModalities).toEqual(['text', 'image'])
+  })
+
+  it('keeps an image returned by a tool result instead of dropping it', async () => {
+    let body: { params?: { messages?: { role: string }[] } } | undefined
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body))
+      return sseResponse([
+        'data: {"type":"text-delta","text":"seen"}',
+        'data: {"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":1,"outputTokens":1}}',
+      ])
+    }) as unknown as typeof fetch
+
+    const adapter = new CommandCodeAdapter({
+      options: visionOptions,
+      catalog: () => VISION_CATALOG,
+      resolveApiKey: async () => 'k',
+      resolveAttachments: () => imageStore as never,
+    })
+
+    const req = {
+      provider: 'commandcode',
+      model: VISION_MODEL.id,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'read it' }] },
+        { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'read_image', arguments: '{}' }] },
+        {
+          role: 'tool',
+          toolCallId: 'c1',
+          isError: false,
+          content: [
+            { type: 'image', attachment: { id: 'a1' } },
+            { type: 'text', text: 'image/png image, 800x500 px' },
+          ],
+        },
+      ],
+    } as unknown as GenerateOptions
+
+    await chunks(adapter, req, fetchImpl)
+
+    const serialized = JSON.stringify(body?.params?.messages ?? [])
+    expect(serialized).toContain('data:image/png;base64,')
+    expect(body?.params?.messages?.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user'])
+  })
+
+  it('still refuses tool-result images on a text-only model', async () => {
+    const fetchImpl = vi.fn()
+    const adapter = new CommandCodeAdapter({
+      options: visionOptions,
+      catalog: () => [MODEL],
+      resolveApiKey: async () => 'k',
+      resolveAttachments: () => imageStore as never,
+    })
+    const req = {
+      provider: 'commandcode',
+      model: MODEL.id,
+      messages: [
+        { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'read_image', arguments: '{}' }] },
+        { role: 'tool', toolCallId: 'c1', isError: false, content: [{ type: 'image', attachment: { id: 'a1' } }] },
+      ],
+    } as unknown as GenerateOptions
+    await expect(chunks(adapter, req, fetchImpl)).rejects.toThrow(/does not support image input/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveCatalogModel', () => {
+  const catalog: CommandCodeModel[] = [
+    { id: 'moonshotai/Kimi-K2.5', name: 'Kimi', reasoning: false, contextWindow: 1, maxTokens: 1 },
+    { id: 'claude-sonnet-5-5', name: 'Sonnet', reasoning: true, contextWindow: 1, maxTokens: 1 },
+    { id: 'a/dup', name: 'A', reasoning: false, contextWindow: 1, maxTokens: 1 },
+    { id: 'b/dup', name: 'B', reasoning: false, contextWindow: 1, maxTokens: 1 },
+  ]
+
+  it('matches an exact id first', () => {
+    expect(resolveCatalogModel(catalog, 'claude-sonnet-5-5')?.id).toBe('claude-sonnet-5-5')
+  })
+
+  it('matches case-insensitively', () => {
+    expect(resolveCatalogModel(catalog, 'CLAUDE-SONNET-5-5')?.id).toBe('claude-sonnet-5-5')
+  })
+
+  it('matches the short name after the final slash', () => {
+    expect(resolveCatalogModel(catalog, 'kimi-k2.5')?.id).toBe('moonshotai/Kimi-K2.5')
+  })
+
+  it('refuses an ambiguous short name rather than guessing', () => {
+    expect(resolveCatalogModel(catalog, 'dup')).toBeUndefined()
+  })
+
+  it('returns undefined for an unknown id', () => {
+    expect(resolveCatalogModel(catalog, 'nope')).toBeUndefined()
   })
 })
